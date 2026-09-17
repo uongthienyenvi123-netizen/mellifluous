@@ -478,12 +478,12 @@ export const StoryDetailView: React.FC<StoryDetailViewProps> = ({
                 <strong className="text-pink-600 dark:text-pink-400">{story.translator}</strong>
               </div>
               <div>
-                <span className="text-stone-400 block text-[11px]">Quy mô tác phẩm</span>
+                <span className="text-stone-400 block text-[11px]">Đã cập nhật</span>
                 <strong className="text-stone-800 dark:text-stone-200 block">
-                  {story.totalChapters} chương
+                  {Math.max(story.completedChapters || 0, chapters.length)}/{story.totalChapters} chương
                 </strong>
                 <span className="text-[11px] text-pink-600 dark:text-pink-400">
-                  {story.mainChaptersCount || 40} chính + {story.extraChaptersCount || extraChapters.length || 5} ngoại
+                  {mainChapters.length} chính + {extraChapters.length} ngoại
                 </span>
               </div>
               <div>

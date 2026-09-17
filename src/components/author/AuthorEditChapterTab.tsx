@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Story, Chapter } from '../../types';
 import {
   Save,
@@ -7,9 +7,11 @@ import {
   Lock,
   Trash2,
   PlusCircle,
-  Clock,
   Sparkles,
   ChevronRight,
+  ChevronLeft,
+  Eye,
+  Edit3,
 } from 'lucide-react';
 import { getStoryChapters } from '../../data/mockData';
 import { publishChapter, deleteChapter, subscribeToStoryChapters } from '../../lib/realtimeService';
@@ -32,8 +34,18 @@ export const AuthorEditChapterTab: React.FC<AuthorEditChapterTabProps> = ({
   const [selectedStoryId, setSelectedStoryId] = useState<string>(
     initialStoryId || stories[0]?.id || ''
   );
+
+  // Sync selectedStoryId when initialStoryId changes from outside
+  useEffect(() => {
+    if (initialStoryId && initialStoryId !== selectedStoryId) {
+      setSelectedStoryId(initialStoryId);
+    }
+  }, [initialStoryId]);
+
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [selectedChapterId, setSelectedChapterId] = useState<string>('');
+  const [chapterSearch, setChapterSearch] = useState('');
+  const [isPreviewMode, setIsPreviewMode] = useState(false);
 
   // Form states
   const [chapterTitle, setChapterTitle] = useState('');
@@ -46,6 +58,9 @@ export const AuthorEditChapterTab: React.FC<AuthorEditChapterTabProps> = ({
   const [chapterPasswordKey, setChapterPasswordKey] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+
+  // Stable ref to prevent background updates from wiping user's uncommitted form typing
+  const lastLoadedChapterIdRef = useRef<string | null>(null);
 
   // Load chapters when selected story changes with realtime subscription
   useEffect(() => {
@@ -73,6 +88,7 @@ export const AuthorEditChapterTab: React.FC<AuthorEditChapterTabProps> = ({
   // Load chapter form data when selected chapter changes
   useEffect(() => {
     if (!selectedChapterId) {
+      lastLoadedChapterIdRef.current = null;
       setChapterTitle('');
       setChapterContent('');
       setTranslatorNote('');
@@ -80,19 +96,82 @@ export const AuthorEditChapterTab: React.FC<AuthorEditChapterTabProps> = ({
       setChapterPasswordKey('');
       return;
     }
-    const ch = chapters.find((c) => c.id === selectedChapterId);
-    if (ch) {
-      setChapterTitle(ch.title || '');
-      setChapterNumber(ch.chapterNumber || 1);
-      setPartType((ch.partType as 'main' | 'extra') || (ch.isExtra ? 'extra' : 'main'));
-      setChapterContent(ch.content || '');
-      setTranslatorNote(ch.translatorNote || '');
-      setIsChapterLocked(Boolean(ch.isLocked));
-      setChapterPasswordHint(ch.passwordHint || '');
-      setChapterPasswordKey(ch.passwordKey || '');
-      setConfirmDelete(false);
+
+    if (lastLoadedChapterIdRef.current !== selectedChapterId) {
+      const ch = chapters.find((c) => c.id === selectedChapterId);
+      if (ch) {
+        lastLoadedChapterIdRef.current = ch.id;
+        setChapterTitle(ch.title || '');
+        setChapterNumber(ch.chapterNumber || 1);
+        setPartType((ch.partType as 'main' | 'extra') || (ch.isExtra ? 'extra' : 'main'));
+        setChapterContent(ch.content || '');
+        setTranslatorNote(ch.translatorNote || '');
+        setIsChapterLocked(Boolean(ch.isLocked));
+        setChapterPasswordHint(ch.passwordHint || '');
+        setChapterPasswordKey(ch.passwordKey || '');
+        setConfirmDelete(false);
+        setIsPreviewMode(false);
+      }
     }
   }, [selectedChapterId, chapters]);
+
+  const selectedStory = stories.find((s) => s.id === selectedStoryId) || stories[0];
+
+  // Navigation indices
+  const currentIndex = chapters.findIndex((c) => c.id === selectedChapterId);
+  const prevChapter = currentIndex > 0 ? chapters[currentIndex - 1] : null;
+  const nextChapter = currentIndex >= 0 && currentIndex < chapters.length - 1 ? chapters[currentIndex + 1] : null;
+
+  const handleSelectChapter = (chId: string) => {
+    lastLoadedChapterIdRef.current = null;
+    setSelectedChapterId(chId);
+  };
+
+  const handleGoToPrev = () => {
+    if (prevChapter) {
+      handleSelectChapter(prevChapter.id);
+    }
+  };
+
+  const handleGoToNext = () => {
+    if (nextChapter) {
+      handleSelectChapter(nextChapter.id);
+    }
+  };
+
+  // Text formatting utility: normalizes empty lines and trims paragraphs
+  const handleFormatContent = () => {
+    if (!chapterContent.trim()) return;
+    const formatted = chapterContent
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line, idx, arr) => line !== '' || (idx > 0 && arr[idx - 1] !== ''))
+      .join('\n\n');
+    setChapterContent(formatted);
+    onFeedback('success', 'Đã chuẩn hóa định dạng dòng và khoảng cách văn bản!');
+  };
+
+  // Quick fill chapter title
+  const handleAutoFillTitle = () => {
+    const prefix = partType === 'extra' ? `Phiên ngoại ${chapterNumber}: ` : `Chương ${chapterNumber}: `;
+    if (!chapterTitle.startsWith('Chương') && !chapterTitle.startsWith('Phiên ngoại')) {
+      setChapterTitle(`${prefix}${chapterTitle.trim()}`);
+    }
+  };
+
+  const filteredChapters = useMemo(() => {
+    if (!chapterSearch.trim()) return chapters;
+    const q = chapterSearch.toLowerCase();
+    return chapters.filter(
+      (c) =>
+        (c.title && c.title.toLowerCase().includes(q)) ||
+        String(c.chapterNumber).includes(q) ||
+        (c.isExtra && 'phiên ngoại'.includes(q))
+    );
+  }, [chapters, chapterSearch]);
+
+  const wordCount = chapterContent.trim() ? chapterContent.trim().split(/\s+/).filter(Boolean).length : 0;
+  const estReadMinutes = Math.max(1, Math.ceil(wordCount / 220));
 
   const handleSaveChapter = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -119,7 +198,7 @@ export const AuthorEditChapterTab: React.FC<AuthorEditChapterTabProps> = ({
         passwordKey: isChapterLocked ? chapterPasswordKey.trim().toLowerCase() : '',
         content: chapterContent.trim(),
         translatorNote: translatorNote.trim(),
-        wordCount: chapterContent.trim().split(/\s+/).length,
+        wordCount,
         isExtra: partType === 'extra',
         extraNumber: partType === 'extra' ? Number(chapterNumber) : 0,
         partType,
@@ -150,6 +229,7 @@ export const AuthorEditChapterTab: React.FC<AuthorEditChapterTabProps> = ({
       const refreshed = getStoryChapters(selectedStoryId);
       setChapters(refreshed);
       if (refreshed.length > 0) {
+        lastLoadedChapterIdRef.current = null;
         setSelectedChapterId(refreshed[0].id);
       } else {
         setSelectedChapterId('');
@@ -162,45 +242,70 @@ export const AuthorEditChapterTab: React.FC<AuthorEditChapterTabProps> = ({
   };
 
   return (
-    <div className="space-y-5">
-      {/* Selector Card */}
-      <div className="p-4 rounded-2xl bg-pink-50/70 dark:bg-stone-800 border border-pink-200/80 dark:border-stone-700 space-y-3">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+    <div className="space-y-6">
+      {/* Top Selection Box */}
+      <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-pink-50/80 to-rose-50/60 dark:from-stone-850 dark:to-stone-800 border border-pink-200/80 dark:border-stone-700 space-y-4 shadow-xs">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="space-y-1">
-            <label className="text-xs font-bold text-stone-800 dark:text-stone-200 uppercase tracking-wider flex items-center gap-1.5">
-              <BookOpen className="w-4 h-4 text-pink-500" />
-              <span>1. Chọn bộ truyện:</span>
+            <label className="text-xs font-bold text-stone-800 dark:text-stone-200 uppercase tracking-wider flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <BookOpen className="w-4 h-4 text-pink-500" />
+                <span>Bộ truyện đang thao tác:</span>
+              </span>
+              <span className="text-[11px] font-semibold text-pink-600 dark:text-pink-400 font-mono">
+                {chapters.length}/{selectedStory?.totalChapters || chapters.length} chương
+              </span>
             </label>
             <select
               value={selectedStoryId}
-              onChange={(e) => setSelectedStoryId(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl border border-pink-200 dark:border-stone-600 bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 text-xs font-medium"
+              onChange={(e) => {
+                lastLoadedChapterIdRef.current = null;
+                setSelectedStoryId(e.target.value);
+              }}
+              className="w-full px-3.5 py-2.5 rounded-xl border border-pink-200 dark:border-stone-600 bg-white dark:bg-stone-900 text-sm font-semibold text-stone-900 dark:text-stone-100 focus:ring-2 focus:ring-pink-300 focus:outline-hidden"
             >
-              {stories.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.title}
-                </option>
-              ))}
+              {stories.map((s) => {
+                const count = Math.max(s.completedChapters || 0, getStoryChapters(s.id).length);
+                return (
+                  <option key={s.id} value={s.id}>
+                    📖 {s.title} ({count}/{s.totalChapters} chương)
+                  </option>
+                );
+              })}
             </select>
           </div>
 
           <div className="space-y-1">
-            <label className="text-xs font-bold text-stone-800 dark:text-stone-200 uppercase tracking-wider flex items-center gap-1.5">
-              <FileText className="w-4 h-4 text-pink-500" />
-              <span>2. Chọn chương cần sửa ({chapters.length} chương):</span>
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-stone-800 dark:text-stone-200 uppercase tracking-wider flex items-center gap-1.5">
+                <FileText className="w-4 h-4 text-pink-500" />
+                <span>Chọn chương để chỉnh sửa:</span>
+              </label>
+              {chapters.length > 5 && (
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="Lọc chương..."
+                    value={chapterSearch}
+                    onChange={(e) => setChapterSearch(e.target.value)}
+                    className="w-28 text-[11px] px-2 py-0.5 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 text-stone-800 dark:text-stone-200 focus:outline-hidden"
+                  />
+                </div>
+              )}
+            </div>
+
             <select
               value={selectedChapterId}
-              onChange={(e) => setSelectedChapterId(e.target.value)}
+              onChange={(e) => handleSelectChapter(e.target.value)}
               disabled={chapters.length === 0}
-              className="w-full px-3 py-2 rounded-xl border border-pink-200 dark:border-stone-600 bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 text-xs font-medium disabled:opacity-50"
+              className="w-full px-3.5 py-2.5 rounded-xl border border-pink-200 dark:border-stone-600 bg-white dark:bg-stone-900 text-sm font-medium text-stone-900 dark:text-stone-100 focus:ring-2 focus:ring-pink-300 focus:outline-hidden disabled:opacity-50"
             >
               {chapters.length === 0 ? (
-                <option value="">Chưa có chương nào trong truyện này</option>
+                <option value="">(Chưa có chương nào trong bộ truyện)</option>
               ) : (
-                chapters.map((ch) => (
+                filteredChapters.map((ch) => (
                   <option key={ch.id} value={ch.id}>
-                    {ch.partType === 'extra' ? '[Phiên ngoại] ' : ''}
+                    {ch.partType === 'extra' ? '★ [Phiên ngoại] ' : '• '}
                     {ch.title || `Chương ${ch.chapterNumber}`}
                   </option>
                 ))
@@ -209,9 +314,38 @@ export const AuthorEditChapterTab: React.FC<AuthorEditChapterTabProps> = ({
           </div>
         </div>
 
+        {/* Quick Chapter Navigation Bar */}
+        {chapters.length > 0 && selectedChapterId && (
+          <div className="flex items-center justify-between pt-2 border-t border-pink-100 dark:border-stone-800 text-xs">
+            <button
+              type="button"
+              onClick={handleGoToPrev}
+              disabled={!prevChapter}
+              className="px-3 py-1.5 rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 text-stone-700 dark:text-stone-300 hover:bg-pink-50 dark:hover:bg-stone-800 disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1 cursor-pointer transition-colors"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+              <span>Chương trước</span>
+            </button>
+
+            <span className="text-[11px] text-stone-500 dark:text-stone-400 font-mono">
+              Chương {currentIndex + 1} / {chapters.length}
+            </span>
+
+            <button
+              type="button"
+              onClick={handleGoToNext}
+              disabled={!nextChapter}
+              className="px-3 py-1.5 rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 text-stone-700 dark:text-stone-300 hover:bg-pink-50 dark:hover:bg-stone-800 disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1 cursor-pointer transition-colors"
+            >
+              <span>Chương sau</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
         {chapters.length === 0 && onJumpToNewChapter && (
-          <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 text-xs text-amber-800 dark:text-amber-200 flex items-center justify-between">
-            <span>Truyện này chưa có chương nào được đăng.</span>
+          <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 text-xs text-amber-800 dark:text-amber-200 flex items-center justify-between">
+            <span>Bộ truyện này chưa có chương nào được đăng tải.</span>
             <button
               type="button"
               onClick={() => onJumpToNewChapter(selectedStoryId)}
@@ -225,7 +359,7 @@ export const AuthorEditChapterTab: React.FC<AuthorEditChapterTabProps> = ({
 
       {/* Edit Chapter Form */}
       {selectedChapterId && (
-        <form onSubmit={handleSaveChapter} className="space-y-4">
+        <form onSubmit={handleSaveChapter} className="space-y-5">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="space-y-1">
               <label className="text-xs font-semibold text-stone-800 dark:text-stone-100">
@@ -234,7 +368,7 @@ export const AuthorEditChapterTab: React.FC<AuthorEditChapterTabProps> = ({
               <select
                 value={partType}
                 onChange={(e) => setPartType(e.target.value as 'main' | 'extra')}
-                className="w-full px-3 py-2 rounded-xl border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 text-xs"
+                className="w-full px-3.5 py-2.5 rounded-xl border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 text-xs font-medium"
               >
                 <option value="main">Chính truyện</option>
                 <option value="extra">Phiên ngoại (Ngoại truyện)</option>
@@ -250,7 +384,7 @@ export const AuthorEditChapterTab: React.FC<AuthorEditChapterTabProps> = ({
                 min={1}
                 value={chapterNumber}
                 onChange={(e) => setChapterNumber(Number(e.target.value))}
-                className="w-full px-3 py-2 rounded-xl border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 text-xs"
+                className="w-full px-3.5 py-2.5 rounded-xl border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 text-xs font-semibold"
               />
             </div>
 
@@ -258,7 +392,7 @@ export const AuthorEditChapterTab: React.FC<AuthorEditChapterTabProps> = ({
               <label className="text-xs font-semibold text-stone-800 dark:text-stone-100">
                 Khóa bảo vệ mật khẩu
               </label>
-              <label className="h-[38px] px-3 rounded-xl border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 flex items-center gap-2 cursor-pointer text-xs font-medium text-stone-800 dark:text-stone-100">
+              <label className="h-[42px] px-3.5 rounded-xl border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 flex items-center gap-2 cursor-pointer text-xs font-medium text-stone-800 dark:text-stone-100 hover:border-pink-300 transition-colors">
                 <input
                   type="checkbox"
                   checked={isChapterLocked}
@@ -273,7 +407,7 @@ export const AuthorEditChapterTab: React.FC<AuthorEditChapterTabProps> = ({
 
           {/* Conditional Chapter Password Box */}
           {isChapterLocked && (
-            <div className="p-4 rounded-2xl bg-amber-50/80 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/80 space-y-3 animate-in fade-in duration-200">
+            <div className="p-4 rounded-2xl bg-amber-50/80 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/80 space-y-3 animate-in fade-in duration-200 shadow-2xs">
               <div className="flex items-center gap-2 text-xs font-bold text-amber-900 dark:text-amber-200">
                 <Lock className="w-3.5 h-3.5" />
                 <span>Thiết lập Mật khẩu riêng cho chương này:</span>
@@ -288,7 +422,7 @@ export const AuthorEditChapterTab: React.FC<AuthorEditChapterTabProps> = ({
                     value={chapterPasswordHint}
                     onChange={(e) => setChapterPasswordHint(e.target.value)}
                     placeholder="Ví dụ: Ngày sinh nhật của Cố Diễn (ddmm)"
-                    className="w-full px-3 py-2 rounded-xl bg-white dark:bg-stone-900 border border-amber-300 dark:border-amber-700/80 text-stone-900 dark:text-stone-100 placeholder:text-stone-400 dark:placeholder:text-stone-500 text-xs focus:ring-2 focus:ring-amber-400 focus:outline-hidden"
+                    className="w-full px-3.5 py-2 rounded-xl bg-white dark:bg-stone-900 border border-amber-300 dark:border-amber-700/80 text-stone-900 dark:text-stone-100 placeholder:text-stone-400 text-xs focus:ring-2 focus:ring-amber-400 focus:outline-hidden"
                   />
                 </div>
                 <div className="space-y-1">
@@ -300,7 +434,7 @@ export const AuthorEditChapterTab: React.FC<AuthorEditChapterTabProps> = ({
                     value={chapterPasswordKey}
                     onChange={(e) => setChapterPasswordKey(e.target.value)}
                     placeholder="Ví dụ: 1208 hoặc codien..."
-                    className="w-full px-3 py-2 rounded-xl bg-white dark:bg-stone-900 border border-amber-300 dark:border-amber-700/80 text-stone-900 dark:text-stone-100 placeholder:text-stone-400 dark:placeholder:text-stone-500 text-xs font-mono focus:ring-2 focus:ring-amber-400 focus:outline-hidden"
+                    className="w-full px-3.5 py-2 rounded-xl bg-white dark:bg-stone-900 border border-amber-300 dark:border-amber-700/80 text-stone-900 dark:text-stone-100 placeholder:text-stone-400 text-xs font-mono focus:ring-2 focus:ring-amber-400 focus:outline-hidden"
                   />
                 </div>
               </div>
@@ -310,10 +444,21 @@ export const AuthorEditChapterTab: React.FC<AuthorEditChapterTabProps> = ({
             </div>
           )}
 
+          {/* Chapter Title */}
           <div className="space-y-1">
-            <label className="text-xs font-semibold text-stone-800 dark:text-stone-100">
-              Tiêu đề chương <span className="text-rose-500">*</span>
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-stone-800 dark:text-stone-100">
+                Tiêu đề chương <span className="text-rose-500">*</span>
+              </label>
+              <button
+                type="button"
+                onClick={handleAutoFillTitle}
+                className="text-[11px] text-pink-600 dark:text-pink-400 hover:underline flex items-center gap-1 cursor-pointer"
+              >
+                <Sparkles className="w-3 h-3" />
+                <span>Thêm tiền tố "Chương {chapterNumber}:"</span>
+              </button>
+            </div>
             <input
               type="text"
               required
@@ -323,6 +468,7 @@ export const AuthorEditChapterTab: React.FC<AuthorEditChapterTabProps> = ({
             />
           </div>
 
+          {/* Translator Note */}
           <div className="space-y-1">
             <label className="text-xs font-semibold text-stone-800 dark:text-stone-100">
               Lời nhắn gửi của Mellifluous (Translator Note)
@@ -331,35 +477,90 @@ export const AuthorEditChapterTab: React.FC<AuthorEditChapterTabProps> = ({
               type="text"
               value={translatorNote}
               onChange={(e) => setTranslatorNote(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 text-xs focus:ring-2 focus:ring-pink-300 focus:outline-hidden"
+              placeholder="VD: Cảm ơn bạn đọc đã đồng hành cùng bộ truyện..."
+              className="w-full px-3.5 py-2.5 rounded-xl border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 text-xs focus:ring-2 focus:ring-pink-300 focus:outline-hidden"
             />
           </div>
 
-          <div className="space-y-1">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-semibold text-stone-800 dark:text-stone-100">
-                Nội dung chương truyện <span className="text-rose-500">*</span>
-              </label>
-              <span className="text-[11px] text-stone-500 dark:text-stone-400 font-mono">
-                {chapterContent.trim() ? chapterContent.trim().split(/\s+/).length : 0} từ
-              </span>
+          {/* Content Area with Toolbar & Preview Toggle */}
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-100 dark:border-stone-800 pb-2">
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-semibold text-stone-800 dark:text-stone-100">
+                  Nội dung chương truyện <span className="text-rose-500">*</span>
+                </label>
+                <span className="text-[11px] text-stone-500 dark:text-stone-400 font-mono bg-stone-100 dark:bg-stone-800 px-2 py-0.5 rounded-md">
+                  {wordCount} từ • ~{estReadMinutes} phút đọc
+                </span>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleFormatContent}
+                  className="px-2.5 py-1 rounded-lg text-xs font-medium bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-700 text-stone-700 dark:text-stone-300 transition-colors flex items-center gap-1 cursor-pointer"
+                  title="Xóa bớt dòng trống thừa và thụt lề chuẩn"
+                >
+                  <Sparkles className="w-3 h-3 text-pink-500" />
+                  <span>Chuẩn hóa dòng</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsPreviewMode(!isPreviewMode)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors flex items-center gap-1 cursor-pointer ${
+                    isPreviewMode
+                      ? 'bg-pink-500 text-white'
+                      : 'bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-700 text-stone-700 dark:text-stone-300'
+                  }`}
+                >
+                  {isPreviewMode ? <Edit3 className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                  <span>{isPreviewMode ? 'Chế độ gõ chữ' : 'Xem trước'}</span>
+                </button>
+              </div>
             </div>
-            <textarea
-              rows={12}
-              required
-              value={chapterContent}
-              onChange={(e) => setChapterContent(e.target.value)}
-              className="w-full p-3.5 rounded-xl border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 text-sm leading-relaxed focus:ring-2 focus:ring-pink-300 focus:outline-hidden font-serif"
-            />
+
+            {isPreviewMode ? (
+              <div className="w-full min-h-[300px] max-h-[500px] overflow-y-auto p-4 sm:p-6 rounded-xl border border-pink-200 dark:border-stone-700 bg-pink-50/20 dark:bg-stone-900 font-serif text-sm sm:text-base leading-relaxed text-stone-800 dark:text-stone-200 space-y-4 custom-scrollbar">
+                <div className="border-b border-pink-100 dark:border-stone-800 pb-3">
+                  <h3 className="font-bold text-base sm:text-lg text-stone-900 dark:text-stone-100">
+                    {chapterTitle || 'Chưa có tiêu đề'}
+                  </h3>
+                  {translatorNote && (
+                    <p className="text-xs italic text-stone-500 dark:text-stone-400 mt-1">
+                      🌸 Lời nhắn: {translatorNote}
+                    </p>
+                  )}
+                </div>
+                {chapterContent ? (
+                  chapterContent.split('\n\n').map((para, idx) => (
+                    <p key={idx} className="indent-6 leading-relaxed">
+                      {para}
+                    </p>
+                  ))
+                ) : (
+                  <p className="text-stone-400 italic">Chưa có nội dung văn bản.</p>
+                )}
+              </div>
+            ) : (
+              <textarea
+                rows={12}
+                required
+                value={chapterContent}
+                onChange={(e) => setChapterContent(e.target.value)}
+                placeholder="Dán hoặc gõ nội dung chương truyện tại đây..."
+                className="w-full p-4 rounded-xl border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 text-sm leading-relaxed focus:ring-2 focus:ring-pink-300 focus:outline-hidden font-serif custom-scrollbar"
+              />
+            )}
           </div>
 
           {/* Action Bar */}
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-stone-100 dark:border-stone-800">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 border-t border-stone-200 dark:border-stone-700">
             <div>
               {confirmDelete ? (
                 <div className="flex items-center gap-2 bg-rose-50 dark:bg-rose-950/60 p-1.5 rounded-xl border border-rose-200 dark:border-rose-800">
                   <span className="text-xs text-rose-700 dark:text-rose-300 font-medium">
-                    Xác nhận xóa chương này?
+                    Xác nhận xóa vĩnh viễn chương này?
                   </span>
                   <button
                     type="button"
@@ -391,7 +592,7 @@ export const AuthorEditChapterTab: React.FC<AuthorEditChapterTabProps> = ({
             <button
               type="submit"
               disabled={isSaving}
-              className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-gradient-to-r from-pink-500 to-rose-500 hover:from-pink-600 hover:to-rose-600 text-white font-medium text-xs sm:text-sm shadow-xs flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 transition-all"
+              className="w-full sm:w-auto px-7 py-3 rounded-xl bg-gradient-to-r from-pink-500 to-rose-500 hover:from-pink-600 hover:to-rose-600 text-white font-semibold text-xs sm:text-sm shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 transition-all hover:shadow-lg"
             >
               <Save className="w-4 h-4" />
               <span>{isSaving ? 'Đang lưu cập nhật...' : 'Lưu cập nhật chương'}</span>

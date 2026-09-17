@@ -30,6 +30,8 @@ import {
   Tag,
   Users,
   RefreshCw,
+  Search,
+  Plus,
 } from 'lucide-react';
 import {
   publishStory,
@@ -47,7 +49,7 @@ import { AuthorEditChapterTab } from './author/AuthorEditChapterTab';
 import { AuthorAnnouncementsTab } from './author/AuthorAnnouncementsTab';
 import { AuthorGenresTab } from './author/AuthorGenresTab';
 import { AuthorCollaboratorsTab } from './author/AuthorCollaboratorsTab';
-import { getCustomGenres, subscribeToCustomGenres } from '../utils/genreManager';
+import { getCustomGenres, subscribeToCustomGenres, getStoryGenres, addCustomGenre } from '../utils/genreManager';
 
 interface AuthorPublishModalProps {
   isOpen: boolean;
@@ -142,8 +144,9 @@ export const AuthorPublishModal: React.FC<AuthorPublishModalProps> = ({
   const [storyAuthor, setStoryAuthor] = useState('');
   const [storyTranslator, setStoryTranslator] = useState('Mellifluous');
   const [storyStatus, setStoryStatus] = useState<'completed' | 'ongoing'>('ongoing');
-  const [selectedGenres, setSelectedGenres] = useState<string[]>(['Thanh xuân vườn trường', 'Ngọt sủng']);
+  const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
   const [customGenre, setCustomGenre] = useState('');
+  const [newStoryGenreSearch, setNewStoryGenreSearch] = useState('');
   const [storySummary, setStorySummary] = useState('');
   const [storyCover, setStoryCover] = useState(PRESET_COVERS[0].url);
   const [hasPassword, setHasPassword] = useState(false);
@@ -399,11 +402,22 @@ export const AuthorPublishModal: React.FC<AuthorPublishModalProps> = ({
     );
   };
 
+  const handleRemoveGenre = (genre: string) => {
+    setSelectedGenres((prev) => prev.filter((g) => g !== genre));
+  };
+
+  const handleClearAllGenres = () => {
+    setSelectedGenres([]);
+  };
+
   const handleAddCustomGenre = () => {
-    if (customGenre.trim() && !selectedGenres.includes(customGenre.trim())) {
-      setSelectedGenres((prev) => [...prev, customGenre.trim()]);
-      setCustomGenre('');
+    const trimmed = customGenre.trim();
+    if (!trimmed) return;
+    addCustomGenre(trimmed);
+    if (!selectedGenres.includes(trimmed)) {
+      setSelectedGenres((prev) => [...prev, trimmed]);
     }
+    setCustomGenre('');
   };
 
   const filteredLetters = letters.filter((l) => {
@@ -739,53 +753,138 @@ export const AuthorPublishModal: React.FC<AuthorPublishModalProps> = ({
                 </div>
               </div>
 
-              {/* Genres */}
-              <div className="space-y-2 pt-1">
-                <label className="text-xs font-semibold text-stone-800 dark:text-stone-100">
-                  Thể loại / Thẻ tag ({selectedGenres.length} đã chọn)
-                </label>
-                <div className="flex flex-wrap gap-1.5">
-                  {availableGenres.map((genre) => {
-                    const isSelected = selectedGenres.includes(genre);
-                    return (
+              {/* Genres Selection & Management */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-pink-50/70 via-rose-50/50 to-pink-50/70 dark:from-stone-850 dark:to-stone-800 border border-pink-200/90 dark:border-stone-700 space-y-3.5 shadow-2xs">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-pink-100 dark:border-stone-700/80 pb-2.5">
+                  <div className="space-y-0.5">
+                    <label className="text-xs font-bold text-stone-800 dark:text-stone-100 uppercase tracking-wider flex items-center gap-1.5">
+                      <Tag className="w-3.5 h-3.5 text-pink-500" />
+                      <span>Chuyên mục / Thể loại / Thẻ nhãn tác phẩm</span>
+                      <span className="text-rose-500">*</span>
+                    </label>
+                    <p className="text-[11px] text-stone-500 dark:text-stone-400">
+                      Chọn thẻ chính xác phản ánh nội dung để độc giả dễ tìm kiếm và lọc truyện.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-pink-100 text-pink-700 dark:bg-pink-950/80 dark:text-pink-300">
+                      Đã chọn: {selectedGenres.length} thể loại
+                    </span>
+                    {selectedGenres.length > 0 && (
                       <button
-                        key={genre}
                         type="button"
-                        onClick={() => toggleGenre(genre)}
-                        className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer flex items-center gap-1 ${
-                          isSelected
-                            ? 'bg-pink-500 text-white shadow-xs'
-                            : 'bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-200 hover:bg-pink-50 dark:hover:bg-stone-700 border border-transparent dark:border-stone-700'
-                        }`}
+                        onClick={handleClearAllGenres}
+                        className="text-xs text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 px-2.5 py-1 rounded-lg font-medium transition-colors cursor-pointer"
                       >
-                        {isSelected && <Check className="w-3 h-3" />}
-                        <span>{genre}</span>
+                        Xóa tất cả thẻ
                       </button>
-                    );
-                  })}
+                    )}
+                  </div>
                 </div>
 
-                <div className="flex gap-2 pt-1">
-                  <input
-                    type="text"
-                    placeholder="Thêm tag tùy chỉnh..."
-                    value={customGenre}
-                    onChange={(e) => setCustomGenre(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleAddCustomGenre();
-                      }
-                    }}
-                    className="px-3 py-1.5 rounded-xl border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 text-xs w-64 focus:outline-hidden"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleAddCustomGenre}
-                    className="px-3 py-1.5 rounded-xl bg-stone-100 hover:bg-stone-200 dark:bg-stone-700 dark:hover:bg-stone-600 text-stone-700 dark:text-stone-200 text-xs font-medium cursor-pointer"
-                  >
-                    + Thêm tag
-                  </button>
+                {/* ACTIVE SELECTED TAGS (Removable Chips) */}
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-bold text-stone-600 dark:text-stone-300 uppercase tracking-wider">
+                    Thẻ đang gán cho truyện:
+                  </label>
+                  {selectedGenres.length === 0 ? (
+                    <div className="p-3 rounded-xl bg-stone-50 dark:bg-stone-800/40 border border-dashed border-stone-300 dark:border-stone-700 text-center">
+                      <p className="text-xs text-stone-500 dark:text-stone-400">
+                        Chưa chọn thẻ nào. Vui lòng chọn bên dưới hoặc thêm thẻ tùy chỉnh mới.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap gap-2 p-2.5 rounded-xl bg-pink-50/50 dark:bg-stone-900 border border-pink-100 dark:border-stone-800">
+                      {selectedGenres.map((g) => (
+                        <span
+                          key={g}
+                          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-pink-500 hover:bg-pink-600 text-white shadow-2xs transition-all group"
+                        >
+                          <span>{g}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveGenre(g)}
+                            className="p-0.5 rounded-full hover:bg-pink-700/60 text-pink-100 hover:text-white transition-colors cursor-pointer"
+                            title={`Bỏ thẻ ${g}`}
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* TAG CLOUD & QUICK SEARCH */}
+                <div className="space-y-2 pt-1">
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
+                    <label className="text-[11px] font-bold text-stone-600 dark:text-stone-300 uppercase tracking-wider">
+                      Danh sách thẻ gợi ý (Nhấp để bật/tắt):
+                    </label>
+
+                    {/* Tag search input */}
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-400" />
+                      <input
+                        type="text"
+                        placeholder="Lọc nhanh thẻ..."
+                        value={newStoryGenreSearch}
+                        onChange={(e) => setNewStoryGenreSearch(e.target.value)}
+                        className="pl-8 pr-3 py-1 text-xs rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 text-stone-800 dark:text-stone-200 w-full sm:w-48 focus:outline-hidden focus:ring-1 focus:ring-pink-300"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-1.5 max-h-44 overflow-y-auto p-2 rounded-xl bg-stone-50 dark:bg-stone-900 border border-stone-200 dark:border-stone-800 custom-scrollbar">
+                    {getStoryGenres(availableGenres)
+                      .filter((genre) =>
+                        !newStoryGenreSearch.trim() ||
+                        genre.toLowerCase().includes(newStoryGenreSearch.toLowerCase())
+                      )
+                      .map((genre) => {
+                        const isSelected = selectedGenres.includes(genre);
+                        return (
+                          <button
+                            key={genre}
+                            type="button"
+                            onClick={() => toggleGenre(genre)}
+                            className={`px-2.5 py-1.5 rounded-xl text-xs font-medium transition-all cursor-pointer flex items-center gap-1.5 ${
+                              isSelected
+                                ? 'bg-pink-500 text-white shadow-xs font-semibold scale-102'
+                                : 'bg-white dark:bg-stone-800 text-stone-700 dark:text-stone-200 hover:bg-pink-50 dark:hover:bg-stone-700 border border-stone-200 dark:border-stone-700 hover:border-pink-300'
+                            }`}
+                          >
+                            {isSelected ? <Check className="w-3 h-3 shrink-0" /> : <Tag className="w-2.5 h-2.5 text-stone-400 shrink-0" />}
+                            <span>{genre}</span>
+                          </button>
+                        );
+                      })}
+                  </div>
+
+                  {/* Custom Tag Input */}
+                  <div className="flex gap-2 pt-1">
+                    <input
+                      type="text"
+                      placeholder="Nhập tên thể loại / chuyên mục mới..."
+                      value={customGenre}
+                      onChange={(e) => setCustomGenre(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddCustomGenre();
+                        }
+                      }}
+                      className="flex-1 px-3.5 py-2 rounded-xl border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 text-xs focus:ring-2 focus:ring-pink-300 focus:outline-hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddCustomGenre}
+                      className="px-4 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-700 text-stone-800 dark:text-stone-100 text-xs font-semibold flex items-center gap-1.5 cursor-pointer border border-stone-200 dark:border-stone-700 transition-colors shrink-0"
+                    >
+                      <Plus className="w-3.5 h-3.5 text-pink-500" />
+                      <span>Thêm thẻ mới</span>
+                    </button>
+                  </div>
                 </div>
               </div>
 

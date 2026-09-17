@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Story } from '../types';
 import { BookOpen, Eye, Heart, Sparkles, Key, CheckCircle, Clock, Star } from 'lucide-react';
-import { subscribeToStoryStats, toggleStoryLike, recordStoryView } from '../lib/realtimeService';
+import { getStoryChapters } from '../data/mockData';
+import { subscribeToStoryStats, subscribeToStoryChapters, toggleStoryLike, recordStoryView } from '../lib/realtimeService';
 
 interface StoryCardProps {
   story: Story;
@@ -16,6 +17,10 @@ export const StoryCard: React.FC<StoryCardProps> = ({ story, onOpenStory, onSele
   const [realtimeLikes, setRealtimeLikes] = useState<number>(story.likes || 0);
   const [ratingAvg, setRatingAvg] = useState<string>('0');
   const [ratingCount, setRatingCount] = useState<number>(0);
+  const [publishedCount, setPublishedCount] = useState<number>(() => {
+    const list = getStoryChapters(story.id);
+    return Math.max(story.completedChapters || 0, list.length);
+  });
   const [isLiked, setIsLiked] = useState<boolean>(() => {
     try {
       return localStorage.getItem(`mel_liked_story_${story.id}`) === 'true';
@@ -25,6 +30,13 @@ export const StoryCard: React.FC<StoryCardProps> = ({ story, onOpenStory, onSele
   });
 
   useEffect(() => {
+    const list = getStoryChapters(story.id);
+    setPublishedCount(Math.max(story.completedChapters || 0, list.length));
+
+    const unsubChapters = subscribeToStoryChapters(story.id, (chs) => {
+      setPublishedCount(Math.max(story.completedChapters || 0, chs.length));
+    });
+
     const unsubscribe = subscribeToStoryStats(
       story.id,
       story.views,
@@ -39,8 +51,11 @@ export const StoryCard: React.FC<StoryCardProps> = ({ story, onOpenStory, onSele
       }
     );
 
-    return () => unsubscribe();
-  }, [story.id, story.views, story.likes]);
+    return () => {
+      unsubscribe();
+      unsubChapters();
+    };
+  }, [story.id, story.views, story.likes, story.completedChapters]);
 
   const handleLike = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -187,7 +202,7 @@ export const StoryCard: React.FC<StoryCardProps> = ({ story, onOpenStory, onSele
           <div className="text-xs text-stone-500 dark:text-stone-400 font-sans">
             <div>
               <span className="font-semibold text-stone-700 dark:text-stone-300">
-                {story.completedChapters}/{story.totalChapters}
+                {publishedCount}/{story.totalChapters}
               </span>{' '}
               chương
             </div>

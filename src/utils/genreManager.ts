@@ -83,7 +83,14 @@ export const getAvailableGenres = (): string[] => {
   return [...cachedGenres];
 };
 
-export const getCustomGenres = getAvailableGenres;
+export const getStoryGenres = (list?: string[]): string[] => {
+  const target = list || cachedGenres;
+  return target.filter(
+    (g) => g.toLowerCase() !== 'tất cả các thể loại mùa hè' && g.toLowerCase() !== 'tất cả thể loại mùa hè'
+  );
+};
+
+export const getCustomGenres = getStoryGenres;
 
 export const addGenre = async (newGenre: string): Promise<{ success: boolean; message: string }> => {
   const trimmed = newGenre.trim();
@@ -107,6 +114,8 @@ export const addGenre = async (newGenre: string): Promise<{ success: boolean; me
 
   return { success: true, message: `Đã thêm thẻ "${trimmed}" vào danh sách!` };
 };
+
+export const addCustomGenre = addGenre;
 
 export const deleteGenre = async (genreToDelete: string): Promise<{ success: boolean; message: string }> => {
   const target = genreToDelete.trim().toLowerCase();

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Story } from '../../types';
 import {
   Save,
@@ -11,9 +11,16 @@ import {
   Check,
   FileEdit,
   ExternalLink,
+  X,
+  Tag,
+  RefreshCw,
+  Eye,
+  Hash,
+  Search,
 } from 'lucide-react';
 import { publishStory, deleteStory } from '../../lib/realtimeService';
-import { getCustomGenres, subscribeToCustomGenres } from '../../utils/genreManager';
+import { getStoryGenres, subscribeToCustomGenres, addCustomGenre } from '../../utils/genreManager';
+import { getStoryChapters } from '../../data/mockData';
 
 interface AuthorEditStoryTabProps {
   stories: Story[];
@@ -42,11 +49,23 @@ export const AuthorEditStoryTab: React.FC<AuthorEditStoryTabProps> = ({
     initialSelectedStoryId || stories[0]?.id || ''
   );
 
-  const [availableGenres, setAvailableGenres] = useState<string[]>(() => getCustomGenres());
+  // Sync selectedStoryId when initialSelectedStoryId prop updates
+  useEffect(() => {
+    if (initialSelectedStoryId && initialSelectedStoryId !== selectedStoryId) {
+      setSelectedStoryId(initialSelectedStoryId);
+    }
+  }, [initialSelectedStoryId]);
+
+  const [availableGenres, setAvailableGenres] = useState<string[]>(() => getStoryGenres());
+  const [genreSearch, setGenreSearch] = useState('');
 
   useEffect(() => {
     const unsub = subscribeToCustomGenres((genres) => {
-      setAvailableGenres(genres);
+      // Filter out any generic filter labels
+      const clean = genres.filter(
+        (g) => g.toLowerCase() !== 'tất cả các thể loại mùa hè' && g.toLowerCase() !== 'tất cả thể loại mùa hè'
+      );
+      setAvailableGenres(clean);
     });
     return unsub;
   }, []);
@@ -69,15 +88,19 @@ export const AuthorEditStoryTab: React.FC<AuthorEditStoryTabProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  // Load selected story details into form
+  // Keep track of the currently loaded story ID so we ONLY load when story selection changes,
+  // preventing background refreshes from erasing user's in-progress changes.
+  const lastLoadedStoryIdRef = useRef<string | null>(null);
+
   useEffect(() => {
-    if (selectedStory) {
+    if (selectedStory && lastLoadedStoryIdRef.current !== selectedStory.id) {
+      lastLoadedStoryIdRef.current = selectedStory.id;
       setTitle(selectedStory.title || '');
       setOriginalTitle(selectedStory.originalTitle || '');
       setAuthor(selectedStory.author || '');
       setTranslator(selectedStory.translator || 'Mellifluous');
       setStatus(selectedStory.status || 'ongoing');
-      setSelectedGenres(Array.isArray(selectedStory.genre) ? selectedStory.genre : ['Ngôn tình']);
+      setSelectedGenres(Array.isArray(selectedStory.genre) ? [...selectedStory.genre] : []);
       setSummary(selectedStory.summary || '');
       setCoverImage(selectedStory.coverImage || PRESET_COVERS[0].url);
       setTotalChapters(selectedStory.totalChapters || 30);
@@ -86,7 +109,15 @@ export const AuthorEditStoryTab: React.FC<AuthorEditStoryTabProps> = ({
       setPasswordKey(selectedStory.passwordKey || '');
       setConfirmDelete(false);
     }
-  }, [selectedStoryId, selectedStory]);
+  }, [selectedStoryId, selectedStory?.id]);
+
+  // Compute live real published chapters for this story
+  const publishedChapters = useMemo(() => {
+    if (!selectedStory) return [];
+    return getStoryChapters(selectedStory.id);
+  }, [selectedStory?.id]);
+
+  const realPublishedCount = Math.max(selectedStory?.completedChapters || 0, publishedChapters.length);
 
   const toggleGenre = (genre: string) => {
     setSelectedGenres((prev) =>
@@ -94,12 +125,30 @@ export const AuthorEditStoryTab: React.FC<AuthorEditStoryTabProps> = ({
     );
   };
 
-  const handleAddCustomGenre = () => {
-    if (customGenre.trim() && !selectedGenres.includes(customGenre.trim())) {
-      setSelectedGenres((prev) => [...prev, customGenre.trim()]);
-      setCustomGenre('');
-    }
+  const handleRemoveGenre = (genreToRemove: string) => {
+    setSelectedGenres((prev) => prev.filter((g) => g !== genreToRemove));
   };
+
+  const handleClearAllGenres = () => {
+    setSelectedGenres([]);
+  };
+
+  const handleAddCustomGenre = async () => {
+    const trimmed = customGenre.trim();
+    if (!trimmed) return;
+    if (!selectedGenres.includes(trimmed)) {
+      setSelectedGenres((prev) => [...prev, trimmed]);
+    }
+    await addCustomGenre(trimmed);
+    setCustomGenre('');
+  };
+
+  // Filtered available genres by search keyword
+  const filteredAvailableGenres = useMemo(() => {
+    if (!genreSearch.trim()) return availableGenres;
+    const q = genreSearch.toLowerCase();
+    return availableGenres.filter((g) => g.toLowerCase().includes(q));
+  }, [availableGenres, genreSearch]);
 
   const handleSaveStory = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -125,6 +174,7 @@ export const AuthorEditStoryTab: React.FC<AuthorEditStoryTabProps> = ({
         summary: summary.trim(),
         totalChapters: Number(totalChapters) || selectedStory.totalChapters || 1,
         mainChaptersCount: Number(totalChapters) || selectedStory.mainChaptersCount || 1,
+        completedChapters: realPublishedCount,
         coverImage: coverImage.trim() || PRESET_COVERS[0].url,
         hasPassword,
         passwordHint: hasPassword ? passwordHint.trim() : '',
@@ -168,51 +218,68 @@ export const AuthorEditStoryTab: React.FC<AuthorEditStoryTabProps> = ({
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {/* Top Story Selector Card */}
-      <div className="p-4 rounded-2xl bg-pink-50/70 dark:bg-stone-800 border border-pink-200/80 dark:border-stone-700 space-y-3">
+      <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-pink-50/80 to-rose-50/60 dark:from-stone-850 dark:to-stone-800 border border-pink-200/80 dark:border-stone-700 space-y-3 shadow-xs">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="space-y-1">
             <label className="text-xs font-bold text-stone-800 dark:text-stone-200 uppercase tracking-wider flex items-center gap-1.5">
               <BookOpen className="w-4 h-4 text-pink-500" />
-              <span>Chọn bộ truyện cần chỉnh sửa:</span>
+              <span>Tác phẩm đang chọn để chỉnh sửa:</span>
             </label>
-            <p className="text-xs text-stone-500">
-              Chỉnh sửa thông tin tác phẩm, văn án, bìa truyện, phân loại hoặc cài đặt password.
+            <p className="text-xs text-stone-500 dark:text-stone-400">
+              Chọn bộ truyện trong danh sách để cập nhật văn án, thể loại, bìa hoặc số chương.
             </p>
           </div>
 
-          {onJumpToChapters && selectedStory && (
-            <button
-              type="button"
-              onClick={() => onJumpToChapters(selectedStory.id)}
-              className="px-3 py-1.5 rounded-xl bg-pink-500 hover:bg-pink-600 text-white text-xs font-semibold flex items-center gap-1.5 self-start sm:self-auto cursor-pointer shadow-xs transition-colors"
-            >
-              <FileEdit className="w-3.5 h-3.5" />
-              <span>Sửa các chương truyện này</span>
-            </button>
-          )}
+          <div className="flex items-center gap-2 self-start sm:self-auto">
+            {selectedStory && (
+              <span className="px-3 py-1 rounded-xl bg-pink-100 dark:bg-pink-950/60 text-pink-700 dark:text-pink-300 text-xs font-semibold flex items-center gap-1">
+                <Hash className="w-3 h-3" />
+                <span>Tiến độ: {realPublishedCount}/{selectedStory.totalChapters} chương</span>
+              </span>
+            )}
+
+            {onJumpToChapters && selectedStory && (
+              <button
+                type="button"
+                onClick={() => onJumpToChapters(selectedStory.id)}
+                className="px-3 py-1.5 rounded-xl bg-pink-500 hover:bg-pink-600 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors"
+                title="Mở tab quản lý chương của truyện này"
+              >
+                <FileEdit className="w-3.5 h-3.5" />
+                <span>Sửa các chương</span>
+              </button>
+            )}
+          </div>
         </div>
 
         <select
           value={selectedStoryId}
-          onChange={(e) => setSelectedStoryId(e.target.value)}
-          className="w-full px-3.5 py-2.5 rounded-xl border border-pink-200 dark:border-stone-600 bg-white dark:bg-stone-900 text-sm font-medium text-stone-800 dark:text-stone-100 focus:ring-2 focus:ring-pink-300 focus:outline-hidden"
+          onChange={(e) => {
+            const nextId = e.target.value;
+            lastLoadedStoryIdRef.current = null; // force reload form with new story data
+            setSelectedStoryId(nextId);
+          }}
+          className="w-full px-3.5 py-2.5 rounded-xl border border-pink-200 dark:border-stone-600 bg-white dark:bg-stone-900 text-sm font-semibold text-stone-900 dark:text-stone-100 focus:ring-2 focus:ring-pink-300 focus:outline-hidden"
         >
-          {stories.map((s) => (
-            <option key={s.id} value={s.id}>
-              📖 {s.title} ({s.status === 'completed' ? 'Đã hoàn thành' : 'Đang ra'} • {s.author})
-            </option>
-          ))}
+          {stories.map((s) => {
+            const chCount = Math.max(s.completedChapters || 0, getStoryChapters(s.id).length);
+            return (
+              <option key={s.id} value={s.id}>
+                📖 {s.title} ({s.status === 'completed' ? 'Đã hoàn' : 'Đang ra'} • {chCount}/{s.totalChapters} chương • {s.author})
+              </option>
+            );
+          })}
         </select>
       </div>
 
       {/* Edit Form */}
-      <form onSubmit={handleSaveStory} className="space-y-4">
+      <form onSubmit={handleSaveStory} className="space-y-5">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="space-y-1">
-            <label className="text-xs font-semibold text-stone-800 dark:text-stone-100">
-              Tên truyện tiếng Việt <span className="text-rose-500">*</span>
+            <label className="text-xs font-semibold text-stone-800 dark:text-stone-100 flex items-center justify-between">
+              <span>Tên truyện tiếng Việt <span className="text-rose-500">*</span></span>
             </label>
             <input
               type="text"
@@ -244,7 +311,7 @@ export const AuthorEditStoryTab: React.FC<AuthorEditStoryTabProps> = ({
               required
               value={author}
               onChange={(e) => setAuthor(e.target.value)}
-              className="w-full px-3.5 py-2.5 rounded-xl border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 text-sm focus:ring-2 focus:ring-pink-300 focus:outline-hidden"
+              className="w-full px-3.5 py-2.5 rounded-xl border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 text-sm focus:ring-2 focus:ring-pink-300 focus:outline-hidden font-medium"
             />
           </div>
 
@@ -267,7 +334,7 @@ export const AuthorEditStoryTab: React.FC<AuthorEditStoryTabProps> = ({
             <select
               value={status}
               onChange={(e) => setStatus(e.target.value as 'completed' | 'ongoing')}
-              className="w-full px-3.5 py-2.5 rounded-xl border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 text-sm focus:ring-2 focus:ring-pink-300 focus:outline-hidden"
+              className="w-full px-3.5 py-2.5 rounded-xl border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 text-sm focus:ring-2 focus:ring-pink-300 focus:outline-hidden font-medium"
             >
               <option value="ongoing">Đang tiến hành (Ongoing)</option>
               <option value="completed">Đã hoàn thành (Completed)</option>
@@ -275,120 +342,225 @@ export const AuthorEditStoryTab: React.FC<AuthorEditStoryTabProps> = ({
           </div>
 
           <div className="space-y-1">
-            <label className="text-xs font-semibold text-stone-800 dark:text-stone-100">
-              Tổng số chương dự kiến
+            <label className="text-xs font-semibold text-stone-800 dark:text-stone-100 flex items-center justify-between">
+              <span>Tổng số chương dự kiến</span>
+              <span className="text-[11px] text-pink-600 dark:text-pink-400 font-normal">
+                Hiện có: <strong>{realPublishedCount}</strong> chương đã đăng
+              </span>
             </label>
             <input
               type="number"
-              min={1}
+              min={Math.max(1, realPublishedCount)}
               value={totalChapters}
               onChange={(e) => setTotalChapters(Number(e.target.value))}
-              className="w-full px-3.5 py-2.5 rounded-xl border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 text-sm focus:ring-2 focus:ring-pink-300 focus:outline-hidden"
+              className="w-full px-3.5 py-2.5 rounded-xl border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 text-sm focus:ring-2 focus:ring-pink-300 focus:outline-hidden font-semibold"
             />
           </div>
         </div>
 
-        {/* Genres Selection */}
-        <div className="space-y-2 pt-1">
-          <label className="text-xs font-semibold text-stone-800 dark:text-stone-100">
-            Thể loại / Thẻ tag ({selectedGenres.length} đã chọn)
-          </label>
-          <div className="flex flex-wrap gap-1.5">
-            {availableGenres.map((genre) => {
-              const isSelected = selectedGenres.includes(genre);
-              return (
+        {/* ========================================================= */}
+        {/* PROFESSIONAL GENRE / CATEGORY SELECTION INTERFACE          */}
+        {/* ========================================================= */}
+        <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-stone-850 border border-stone-200 dark:border-stone-700 space-y-4 shadow-2xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-stone-100 dark:border-stone-800 pb-3">
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-2">
+                <Tag className="w-4 h-4 text-pink-500" />
+                <h4 className="text-xs font-bold uppercase tracking-wider text-stone-800 dark:text-stone-100">
+                  Chuyên mục / Thể loại & Thẻ nhãn
+                </h4>
+              </div>
+              <p className="text-xs text-stone-500 dark:text-stone-400">
+                Nhấp vào thẻ để chọn hoặc bỏ chọn. Có thể thêm thẻ mới tùy ý cho tác phẩm.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-pink-600 dark:text-pink-400 bg-pink-50 dark:bg-pink-950/60 px-2.5 py-1 rounded-lg">
+                Đã chọn: {selectedGenres.length} thể loại
+              </span>
+              {selectedGenres.length > 0 && (
                 <button
-                  key={genre}
                   type="button"
-                  onClick={() => toggleGenre(genre)}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer flex items-center gap-1 ${
-                    isSelected
-                      ? 'bg-pink-500 text-white shadow-xs'
-                      : 'bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-200 hover:bg-pink-50 dark:hover:bg-stone-700 border border-transparent dark:border-stone-700'
-                  }`}
+                  onClick={handleClearAllGenres}
+                  className="text-xs text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 px-2.5 py-1 rounded-lg font-medium transition-colors cursor-pointer"
                 >
-                  {isSelected && <Check className="w-3 h-3" />}
-                  <span>{genre}</span>
+                  Xóa tất cả thẻ
                 </button>
-              );
-            })}
+              )}
+            </div>
           </div>
 
-          <div className="flex gap-2 pt-1">
-            <input
-              type="text"
-              placeholder="Thêm thể loại tùy chỉnh..."
-              value={customGenre}
-              onChange={(e) => setCustomGenre(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  handleAddCustomGenre();
-                }
-              }}
-              className="px-3 py-1.5 rounded-xl border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 text-xs w-64 focus:outline-hidden"
-            />
-            <button
-              type="button"
-              onClick={handleAddCustomGenre}
-              className="px-3 py-1.5 rounded-xl bg-stone-100 hover:bg-stone-200 dark:bg-stone-700 dark:hover:bg-stone-600 text-stone-700 dark:text-stone-200 text-xs font-medium cursor-pointer"
-            >
-              + Thêm tag
-            </button>
+          {/* ACTIVE SELECTED TAGS (Removable Chips) */}
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-bold text-stone-600 dark:text-stone-300 uppercase tracking-wider">
+              Thẻ đang gán cho truyện:
+            </label>
+            {selectedGenres.length === 0 ? (
+              <div className="p-3 rounded-xl bg-stone-50 dark:bg-stone-800/40 border border-dashed border-stone-300 dark:border-stone-700 text-center">
+                <p className="text-xs text-stone-500 dark:text-stone-400">
+                  Chưa chọn thẻ nào. Vui lòng chọn bên dưới hoặc thêm thẻ tùy chỉnh mới.
+                </p>
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-2 p-2.5 rounded-xl bg-pink-50/50 dark:bg-stone-900 border border-pink-100 dark:border-stone-800">
+                {selectedGenres.map((g) => (
+                  <span
+                    key={g}
+                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-pink-500 hover:bg-pink-600 text-white shadow-2xs transition-all group"
+                  >
+                    <span>{g}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveGenre(g)}
+                      className="p-0.5 rounded-full hover:bg-pink-700/60 text-pink-100 hover:text-white transition-colors cursor-pointer"
+                      title={`Bỏ thẻ ${g}`}
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* TAG CLOUD & QUICK SEARCH */}
+          <div className="space-y-2 pt-1">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
+              <label className="text-[11px] font-bold text-stone-600 dark:text-stone-300 uppercase tracking-wider">
+                Danh sách thẻ gợi ý (Nhấp để bật/tắt):
+              </label>
+
+              {/* Tag search input */}
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-400" />
+                <input
+                  type="text"
+                  placeholder="Lọc nhanh thẻ..."
+                  value={genreSearch}
+                  onChange={(e) => setGenreSearch(e.target.value)}
+                  className="pl-8 pr-3 py-1 text-xs rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 text-stone-800 dark:text-stone-200 w-full sm:w-48 focus:outline-hidden focus:ring-1 focus:ring-pink-300"
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-1.5 max-h-48 overflow-y-auto p-2 rounded-xl bg-stone-50 dark:bg-stone-900 border border-stone-200 dark:border-stone-800 custom-scrollbar">
+              {filteredAvailableGenres.map((genre) => {
+                const isSelected = selectedGenres.includes(genre);
+                return (
+                  <button
+                    key={genre}
+                    type="button"
+                    onClick={() => toggleGenre(genre)}
+                    className={`px-2.5 py-1.5 rounded-xl text-xs font-medium transition-all cursor-pointer flex items-center gap-1.5 ${
+                      isSelected
+                        ? 'bg-pink-500 text-white shadow-xs font-semibold scale-102'
+                        : 'bg-white dark:bg-stone-800 text-stone-700 dark:text-stone-200 hover:bg-pink-50 dark:hover:bg-stone-700 border border-stone-200 dark:border-stone-700 hover:border-pink-300'
+                    }`}
+                  >
+                    {isSelected ? <Check className="w-3 h-3 shrink-0" /> : <Tag className="w-2.5 h-2.5 text-stone-400 shrink-0" />}
+                    <span>{genre}</span>
+                  </button>
+                );
+              })}
+              {filteredAvailableGenres.length === 0 && (
+                <div className="w-full text-center py-2 text-xs text-stone-400">
+                  Không tìm thấy thể loại khớp với từ khóa "{genreSearch}".
+                </div>
+              )}
+            </div>
+
+            {/* Custom Tag Input */}
+            <div className="flex gap-2 pt-1">
+              <input
+                type="text"
+                placeholder="Nhập tên thể loại / chuyên mục mới..."
+                value={customGenre}
+                onChange={(e) => setCustomGenre(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleAddCustomGenre();
+                  }
+                }}
+                className="flex-1 max-w-sm px-3.5 py-2 rounded-xl border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 text-xs focus:ring-2 focus:ring-pink-300 focus:outline-hidden"
+              />
+              <button
+                type="button"
+                onClick={handleAddCustomGenre}
+                disabled={!customGenre.trim()}
+                className="px-4 py-2 rounded-xl bg-stone-800 hover:bg-stone-900 dark:bg-stone-700 dark:hover:bg-stone-600 text-white text-xs font-medium cursor-pointer disabled:opacity-40 transition-colors"
+              >
+                + Thêm thẻ mới
+              </button>
+            </div>
           </div>
         </div>
 
         {/* Cover Image */}
-        <div className="space-y-2 pt-1">
-          <label className="text-xs font-semibold text-stone-800 dark:text-stone-100">
-            Ảnh bìa truyện (URL hoặc chọn mẫu có sẵn)
+        <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-stone-850 border border-stone-200 dark:border-stone-700 space-y-3 shadow-2xs">
+          <label className="text-xs font-bold text-stone-800 dark:text-stone-100 uppercase tracking-wider flex items-center gap-1.5">
+            <span>Ảnh bìa truyện</span>
           </label>
-          <div className="flex gap-2">
-            <input
-              type="url"
-              placeholder="Dán link ảnh bìa trực tiếp..."
-              value={coverImage}
-              onChange={(e) => setCoverImage(e.target.value)}
-              className="flex-1 px-3.5 py-2 rounded-xl border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 text-xs font-mono"
-            />
+          <div className="flex flex-col sm:flex-row gap-3 items-start">
             {coverImage && (
-              <img
-                src={coverImage}
-                alt="Preview"
-                className="w-10 h-10 object-cover rounded-lg border border-pink-200 shrink-0"
-              />
+              <div className="w-20 h-28 rounded-xl overflow-hidden border border-pink-200 dark:border-stone-700 shrink-0 shadow-xs relative group">
+                <img
+                  src={coverImage}
+                  alt="Preview"
+                  referrerPolicy="no-referrer"
+                  className="w-full h-full object-cover"
+                />
+                <span className="absolute bottom-0 inset-x-0 bg-black/60 text-[9px] text-white text-center py-0.5 font-mono">
+                  Xem trước
+                </span>
+              </div>
             )}
-          </div>
-
-          <div className="flex flex-wrap gap-2 pt-1">
-            {PRESET_COVERS.map((preset) => (
-              <button
-                key={preset.name}
-                type="button"
-                onClick={() => setCoverImage(preset.url)}
-                className={`text-[11px] px-2 py-1 rounded-lg border transition-all cursor-pointer ${
-                  coverImage === preset.url
-                    ? 'border-pink-500 bg-pink-50 dark:bg-pink-950/40 text-pink-600 dark:text-pink-300 font-bold'
-                    : 'border-stone-200 dark:border-stone-700 text-stone-600 dark:text-stone-300 hover:border-pink-300 dark:hover:border-stone-500'
-                }`}
-              >
-                {preset.name}
-              </button>
-            ))}
+            <div className="flex-1 space-y-2 w-full">
+              <input
+                type="url"
+                placeholder="Dán link ảnh bìa trực tiếp (https://...)..."
+                value={coverImage}
+                onChange={(e) => setCoverImage(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 text-xs font-mono focus:ring-2 focus:ring-pink-300 focus:outline-hidden"
+              />
+              <div className="flex flex-wrap gap-1.5">
+                <span className="text-[11px] text-stone-400 self-center mr-1">Mẫu có sẵn:</span>
+                {PRESET_COVERS.map((preset) => (
+                  <button
+                    key={preset.name}
+                    type="button"
+                    onClick={() => setCoverImage(preset.url)}
+                    className={`text-[11px] px-2.5 py-1 rounded-lg border transition-all cursor-pointer ${
+                      coverImage === preset.url
+                        ? 'border-pink-500 bg-pink-50 dark:bg-pink-950/50 text-pink-600 dark:text-pink-300 font-bold'
+                        : 'border-stone-200 dark:border-stone-700 text-stone-600 dark:text-stone-300 hover:border-pink-300 dark:hover:border-stone-500 bg-stone-50 dark:bg-stone-800'
+                    }`}
+                  >
+                    {preset.name}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
 
         {/* Summary */}
-        <div className="space-y-1 pt-1">
-          <label className="text-xs font-semibold text-stone-800 dark:text-stone-100">
-            Văn án / Giới thiệu tác phẩm
-          </label>
+        <div className="space-y-1.5 pt-1">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-semibold text-stone-800 dark:text-stone-100">
+              Văn án / Giới thiệu tác phẩm
+            </label>
+            <span className="text-[11px] text-stone-400 font-mono">
+              {summary.trim().split(/\s+/).filter(Boolean).length} từ • {summary.length} ký tự
+            </span>
+          </div>
           <textarea
             rows={5}
             value={summary}
             onChange={(e) => setSummary(e.target.value)}
             placeholder="Nội dung tóm tắt cốt truyện..."
-            className="w-full p-3 rounded-xl border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 text-xs sm:text-sm font-serif leading-relaxed focus:ring-2 focus:ring-pink-300 focus:outline-hidden"
+            className="w-full p-3.5 rounded-xl border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 text-xs sm:text-sm font-serif leading-relaxed focus:ring-2 focus:ring-pink-300 focus:outline-hidden"
           />
         </div>
 
@@ -437,7 +609,7 @@ export const AuthorEditStoryTab: React.FC<AuthorEditStoryTabProps> = ({
         </div>
 
         {/* Action Buttons */}
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-stone-100 dark:border-stone-800">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 border-t border-stone-200 dark:border-stone-700">
           <div>
             {confirmDelete ? (
               <div className="flex items-center gap-2 bg-rose-50 dark:bg-rose-950/60 p-1.5 rounded-xl border border-rose-200 dark:border-rose-800">
@@ -474,7 +646,7 @@ export const AuthorEditStoryTab: React.FC<AuthorEditStoryTabProps> = ({
           <button
             type="submit"
             disabled={isSaving}
-            className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-gradient-to-r from-pink-500 to-rose-500 hover:from-pink-600 hover:to-rose-600 text-white font-medium text-xs sm:text-sm shadow-xs flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 transition-all"
+            className="w-full sm:w-auto px-7 py-3 rounded-xl bg-gradient-to-r from-pink-500 to-rose-500 hover:from-pink-600 hover:to-rose-600 text-white font-semibold text-xs sm:text-sm shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 transition-all hover:shadow-lg"
           >
             <Save className="w-4 h-4" />
             <span>{isSaving ? 'Đang lưu cập nhật...' : 'Lưu cập nhật tác phẩm'}</span>
@@ -484,3 +656,4 @@ export const AuthorEditStoryTab: React.FC<AuthorEditStoryTabProps> = ({
     </div>
   );
 };
+
